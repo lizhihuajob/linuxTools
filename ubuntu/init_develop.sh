@@ -156,10 +156,38 @@ install_common_software() {
 install_go() {
     print_section "安装Go环境"
     
+    # 首先尝试从已知路径查找Go（解决多次执行时环境变量未生效的问题）
+    GO_INSTALL_PATH="/usr/local/go/bin/go"
+    
+    # 如果Go二进制文件存在但不在PATH中，先添加到当前PATH
+    if [ -f "$GO_INSTALL_PATH" ] && ! command -v go &> /dev/null; then
+        export PATH=$PATH:/usr/local/go/bin
+        print_info "已将Go路径添加到当前脚本的PATH中"
+    fi
+    
     # 检查Go是否已安装
     if command -v go &> /dev/null; then
         GO_VERSION=$(go version 2>/dev/null | awk '{print $3}')
         print_warning "Go $GO_VERSION 已安装，跳过安装"
+        
+        # 确保环境变量配置存在
+        if ! grep -q "export PATH=\$PATH:/usr/local/go/bin" /etc/profile; then
+            echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
+            echo 'export GOPATH=$HOME/go' >> /etc/profile
+            echo 'export PATH=$PATH:$GOPATH/bin' >> /etc/profile
+            print_info "已补全Go环境变量配置"
+        fi
+        
+        # 确保Go国内代理配置存在
+        if [ ! -f /etc/profile.d/go.sh ]; then
+            cat > /etc/profile.d/go.sh << EOF
+export GOPROXY=https://goproxy.cn,direct
+export GOSUMDB=sum.golang.google.cn
+EOF
+            chmod +x /etc/profile.d/go.sh
+            print_info "已配置Go国内代理"
+        fi
+        
         return
     fi
     
@@ -298,7 +326,40 @@ install_python_venv() {
     
     # 升级pip
     print_info "升级pip..."
-    python3 -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+    # Ubuntu 24.04遵循PEP 668规范，需要使用--break-system-packages参数
+    # 或者可以删除/usr/lib/python3.x/EXTERNALLY-MANAGED文件
+    # 这里使用--break-system-packages参数更安全
+    if python3 -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple --break-system-packages 2>/dev/null; then
+        print_success "pip升级成功"
+    else
+        # 如果升级失败，尝试删除EXTERNALLY-MANAGED文件后再升级
+        print_warning "pip升级失败，尝试绕过PEP 668限制..."
+        
+        # 查找EXTERNALLY-MANAGED文件
+        EXTERNALLY_MANAGED_FILE=$(find /usr/lib/python3* -name "EXTERNALLY-MANAGED" 2>/dev/null | head -1)
+        
+        if [ -n "$EXTERNALLY_MANAGED_FILE" ]; then
+            print_info "找到EXTERNALLY-MANAGED文件: $EXTERNALLY_MANAGED_FILE"
+            # 备份并删除该文件
+            if [ -f "${EXTERNALLY_MANAGED_FILE}.bak" ]; then
+                print_warning "备份文件已存在，跳过备份"
+            else
+                cp "$EXTERNALLY_MANAGED_FILE" "${EXTERNALLY_MANAGED_FILE}.bak"
+                print_info "已备份EXTERNALLY-MANAGED文件到 ${EXTERNALLY_MANAGED_FILE}.bak"
+            fi
+            rm -f "$EXTERNALLY_MANAGED_FILE"
+            print_info "已删除EXTERNALLY-MANAGED文件"
+            
+            # 再次尝试升级pip
+            if python3 -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple 2>/dev/null; then
+                print_success "pip升级成功"
+            else
+                print_warning "pip升级失败，将使用系统默认版本"
+            fi
+        else
+            print_warning "未找到EXTERNALLY-MANAGED文件，pip升级失败，将使用系统默认版本"
+        fi
+    fi
     
     # 配置pip源为清华源
     print_info "配置pip源为清华源..."
@@ -579,7 +640,23 @@ main() {
     
     print_section "初始化完成"
     print_success "Ubuntu开发环境初始化完成！"
-    print_info "请重新登录或运行 'source /etc/profile' 以应用环境变量"
+    
+    # 重新加载环境变量
+    print_info "正在重新加载环境变量..."
+    if [ -f /etc/profile ]; then
+        # 在当前shell中无法直接source /etc/profile并影响父进程
+        # 但可以在当前脚本上下文中生效
+        export PATH=$PATH:/usr/local/go/bin
+        if [ -d /etc/profile.d ]; then
+            for profile_file in /etc/profile.d/*.sh; do
+                if [ -r "$profile_file" ]; then
+                    . "$profile_file"
+                fi
+            done
+        fi
+        print_success "环境变量已在当前脚本上下文中更新"
+    fi
+    print_info "请重新登录或运行 'source /etc/profile' 以在新终端中应用所有环境变量"
 }
 
 # 运行主函数
