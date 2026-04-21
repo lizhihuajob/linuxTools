@@ -955,8 +955,9 @@ collect_database_info() {
         local proc_name="${proc_info%%:*}"
         local db_name="${proc_info#*:}"
         
-        local proc_count=$(pgrep -c "$proc_name" 2>/dev/null || echo "0")
-        if [ "$proc_count" -gt 0 ]; then
+        local proc_count=$(pgrep -c "$proc_name" 2>/dev/null | head -1 || echo "0")
+        proc_count=$(echo "$proc_count" | tr -cd '0-9' || echo "0")
+        if [ -n "$proc_count" ] && [ "$proc_count" -gt 0 ]; then
             local proc_details=$(pgrep -a "$proc_name" 2>/dev/null | head -1 | cut -d' ' -f2- || echo "运行中")
             append_to_file "| $db_name | ✅ 运行中 ($proc_count个进程) | $proc_details |"
         fi
@@ -1478,7 +1479,7 @@ collect_cpu_usage() {
     
     # 使用vmstat获取更准确的CPU使用率
     if is_tool_available "vmstat"; then
-        local vmstat_output=$(vmstat 1 2 2>/dev/null | tail -1)
+        local vmstat_output=$(vmstat 2>/dev/null | tail -1)
         if [ -n "$vmstat_output" ]; then
             local us=$(echo "$vmstat_output" | awk '{print $13}')
             local sy=$(echo "$vmstat_output" | awk '{print $14}')
@@ -1489,7 +1490,7 @@ collect_cpu_usage() {
             local total=$(echo "scale=2; $us + $sy" | bc 2>/dev/null || echo "计算中")
             
             append_to_file ""
-            append_to_file "**vmstat采样 (1秒平均):**"
+            append_to_file "**vmstat采样 (系统启动以来平均):**"
             append_to_file "| 指标 | 值 |"
             append_to_file "|------|----|"
             add_table_row "用户态(us)" "${us}%"
@@ -1667,10 +1668,12 @@ collect_disk_usage() {
                 
                 # 标记高使用率
                 local pcent_num=$(echo "$pcent" | tr -d '%')
-                if [ "$pcent_num" -ge 90 ]; then
-                    pcent="⚠️ ${pcent}"
-                elif [ "$pcent_num" -ge 80 ]; then
-                    pcent="🔶 ${pcent}"
+                if [[ "$pcent_num" =~ ^[0-9]+$ ]]; then
+                    if [ "$pcent_num" -ge 90 ]; then
+                        pcent="⚠️ ${pcent}"
+                    elif [ "$pcent_num" -ge 80 ]; then
+                        pcent="🔶 ${pcent}"
+                    fi
                 fi
                 
                 append_to_file "| $fs | $fstype | $size | $used | $avail | $pcent | $mount |"
@@ -1721,7 +1724,7 @@ collect_disk_usage() {
     
     if command -v iostat &>/dev/null; then
         append_to_file "\`\`\`"
-        iostat -x 1 2 2>/dev/null >> "$OUTPUT_FILE" || echo "iostat不可用" >> "$OUTPUT_FILE"
+        iostat -x 2>/dev/null >> "$OUTPUT_FILE" || echo "iostat不可用" >> "$OUTPUT_FILE"
         append_to_file "\`\`\`"
     else
         append_to_file "> ⚠️  iostat不可用（需要安装sysstat包）\n"
