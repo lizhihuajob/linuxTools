@@ -787,7 +787,7 @@ collect_os_info() {
     
     # 运行时间
     if [ -f /proc/uptime ]; then
-        local uptime_sec=$(awk '{print $1}' /proc/uptime)
+        local uptime_sec=$(awk '{print int($1)}' /proc/uptime)
         local days=$((uptime_sec / 86400))
         local hours=$(( (uptime_sec % 86400) / 3600 ))
         local mins=$(( (uptime_sec % 3600) / 60 ))
