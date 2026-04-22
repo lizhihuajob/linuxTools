@@ -82,12 +82,21 @@ select_interface() {
         echo "  $((i+1)). ${interfaces[$i]}"
     done
     while true; do
-        read -p "请选择要监控的网卡 (1-${#interfaces[@]}): " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#interfaces[@]} )); then
-            echo "${interfaces[$((choice-1))]}"
-            return
+        read -p "请输入要监控的网卡编号或名称: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            if (( choice >= 1 && choice <= ${#interfaces[@]} )); then
+                echo "${interfaces[$((choice-1))]}"
+                return
+            fi
+        else
+            for iface in "${interfaces[@]}"; do
+                if [[ "$iface" == "$choice" ]]; then
+                    echo "$iface"
+                    return
+                fi
+            done
         fi
-        echo "无效的选择，请重试"
+        echo "无效的选择，请输入有效的编号或网卡名称"
     done
 }
 
@@ -131,7 +140,8 @@ main() {
     fi
     trap cleanup SIGINT SIGTERM
     tput civis
-    clear
+    echo "正在监控网卡: $target_iface (按 Ctrl+C 退出)"
+    echo ""
     printf "%-20s | %-15s | %-20s | %-20s\n" "时间戳" "网卡名称" "接收速率 (RX)" "发送速率 (TX)"
     printf "%s\n" "-------------------------------------------------------------------------------------------------"
     local stats1=$(get_interface_stats "$target_iface")
@@ -143,6 +153,7 @@ main() {
     local rx1=$(echo "$stats1" | awk '{print $1}')
     local tx1=$(echo "$stats1" | awk '{print $2}')
     local time1=$(date +%s)
+    local first_iteration=true
     while true; do
         sleep $interval
         local stats2=$(get_interface_stats "$target_iface")
@@ -171,7 +182,13 @@ main() {
         local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
         local rx_formatted=$(format_speed $rx_rate)
         local tx_formatted=$(format_speed $tx_rate)
-        printf "\r%-20s | %-15s | %-20s | %-20s" "$timestamp" "$target_iface" "$rx_formatted" "$tx_formatted"
+        if $first_iteration; then
+            first_iteration=false
+        else
+            tput cuu1
+        fi
+        tput el
+        printf "%-20s | %-15s | %-20s | %-20s\n" "$timestamp" "$target_iface" "$rx_formatted" "$tx_formatted"
         rx1=$rx2
         tx1=$tx2
         time1=$time2
