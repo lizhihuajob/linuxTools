@@ -75,6 +75,64 @@ debug_step() {
     fi
 }
 
+# 命令执行包装函数 - 用于追踪关键命令的执行
+# 使用方法:
+#   直接执行: run_cmd "command arg1 arg2"
+#   获取输出: result=$(run_cmd "command arg1 arg2")
+#   获取输出并忽略错误: result=$(run_cmd "command arg1 arg2" 2>/dev/null)
+run_cmd() {
+    local cmd="$1"
+    local output=""
+    local exit_code=0
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}▶ 开始执行命令:${NC} ${GREEN}$cmd${NC}"
+    fi
+    
+    # 执行命令并捕获输出
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        if [ $exit_code -eq 0 ]; then
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行成功:${NC} ${GREEN}$cmd${NC}"
+        else
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行失败(退出码=$exit_code):${NC} ${RED}$cmd${NC}"
+        fi
+    fi
+    
+    # 输出命令结果
+    echo "$output"
+    return $exit_code
+}
+
+# 命令执行包装函数（不捕获stderr，用于需要保留错误输出的情况）
+run_cmd_raw() {
+    local cmd="$1"
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}▶ 开始执行命令:${NC} ${GREEN}$cmd${NC}"
+    fi
+    
+    # 直接执行命令，不捕获输出
+    eval "$cmd"
+    local exit_code=$?
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        if [ $exit_code -eq 0 ]; then
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行成功:${NC} ${GREEN}$cmd${NC}"
+        else
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行失败(退出码=$exit_code):${NC} ${RED}$cmd${NC}"
+        fi
+    fi
+    
+    return $exit_code
+}
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -263,16 +321,16 @@ collect_motherboard_info() {
     append_to_file "|-----|-----|"
     
     # 检测主板信息
-    local mb_manufacturer=$(dmidecode -s baseboard-manufacturer 2>/dev/null || echo "未知")
-    local mb_product=$(dmidecode -s baseboard-product-name 2>/dev/null || echo "未知")
-    local mb_serial=$(dmidecode -s baseboard-serial-number 2>/dev/null || echo "未知")
-    local mb_version=$(dmidecode -s baseboard-version 2>/dev/null || echo "未知")
+    local mb_manufacturer=$(run_cmd "dmidecode -s baseboard-manufacturer" 2>/dev/null || echo "未知")
+    local mb_product=$(run_cmd "dmidecode -s baseboard-product-name" 2>/dev/null || echo "未知")
+    local mb_serial=$(run_cmd "dmidecode -s baseboard-serial-number" 2>/dev/null || echo "未知")
+    local mb_version=$(run_cmd "dmidecode -s baseboard-version" 2>/dev/null || echo "未知")
     
     # 系统信息
-    local sys_manufacturer=$(dmidecode -s system-manufacturer 2>/dev/null || echo "未知")
-    local sys_product=$(dmidecode -s system-product-name 2>/dev/null || echo "未知")
-    local sys_serial=$(dmidecode -s system-serial-number 2>/dev/null || echo "未知")
-    local sys_uuid=$(dmidecode -s system-uuid 2>/dev/null || echo "未知")
+    local sys_manufacturer=$(run_cmd "dmidecode -s system-manufacturer" 2>/dev/null || echo "未知")
+    local sys_product=$(run_cmd "dmidecode -s system-product-name" 2>/dev/null || echo "未知")
+    local sys_serial=$(run_cmd "dmidecode -s system-serial-number" 2>/dev/null || echo "未知")
+    local sys_uuid=$(run_cmd "dmidecode -s system-uuid" 2>/dev/null || echo "未知")
     
     add_table_row "主板制造商" "$mb_manufacturer"
     add_table_row "主板型号" "$mb_product"
@@ -296,7 +354,7 @@ collect_cpu_info() {
     
     # 使用lscpu获取CPU信息
     if is_tool_available "lscpu"; then
-        local cpu_info=$(lscpu 2>/dev/null)
+        local cpu_info=$(run_cmd "lscpu" 2>/dev/null)
         
         local cpu_model=$(echo "$cpu_info" | grep "Model name" | cut -d: -f2 | xargs || echo "未知")
         local cpu_vendor=$(echo "$cpu_info" | grep "Vendor ID" | cut -d: -f2 | xargs || echo "未知")
@@ -1078,15 +1136,15 @@ collect_container_info() {
         append_to_file "|-----|-----|"
         
         # Docker版本信息
-        local docker_version=$(docker --version 2>/dev/null || echo "未知")
+        local docker_version=$(run_cmd "docker --version" 2>/dev/null || echo "未知")
         add_table_row "版本" "$docker_version"
         
         # 检测Docker服务状态
-        if docker info 2>/dev/null; then
+        if run_cmd "docker info" 2>/dev/null; then
             add_table_row "服务状态" "✅ 运行中"
             
             # 获取详细信息
-            local docker_info=$(docker info 2>/dev/null || true)
+            local docker_info=$(run_cmd "docker info" 2>/dev/null || true)
             local containers_running=$(echo "$docker_info" | grep "Running:" | head -1 | awk '{print $2}' || echo "0")
             local containers_paused=$(echo "$docker_info" | grep "Paused:" | head -1 | awk '{print $2}' || echo "0")
             local containers_stopped=$(echo "$docker_info" | grep "Stopped:" | head -1 | awk '{print $2}' || echo "0")
@@ -1110,7 +1168,7 @@ collect_container_info() {
             # 列出运行中的容器
             add_subsection "运行中的Docker容器"
             
-            local running_containers=$(docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+            local running_containers=$(run_cmd "docker ps --format table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
             if [ -n "$running_containers" ]; then
                 append_to_file "\`\`\`"
                 echo "$running_containers" >> "$OUTPUT_FILE"
@@ -1124,7 +1182,7 @@ collect_container_info() {
             # 列出所有容器
             add_subsection "所有Docker容器"
             
-            local all_containers=$(docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+            local all_containers=$(run_cmd "docker ps -a --format table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
             if [ -n "$all_containers" ]; then
                 append_to_file "\`\`\`"
                 echo "$all_containers" >> "$OUTPUT_FILE"
@@ -1138,7 +1196,7 @@ collect_container_info() {
             # 列出镜像
             add_subsection "Docker镜像列表"
             
-            local images=$(docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null)
+            local images=$(run_cmd "docker images --format table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null)
             if [ -n "$images" ]; then
                 append_to_file "\`\`\`"
                 echo "$images" >> "$OUTPUT_FILE"
@@ -1554,7 +1612,7 @@ collect_cpu_usage() {
     
     # 使用top获取CPU使用率
     if is_tool_available "top"; then
-        local cpu_usage=$(top -bn1 2>/dev/null | grep "Cpu(s)" | head -1)
+        local cpu_usage=$(run_cmd "top -bn1" 2>/dev/null | grep "Cpu(s)" | head -1)
         if [ -n "$cpu_usage" ]; then
             local user=$(echo "$cpu_usage" | awk '{print $2}' | cut -d'%' -f1)
             local system=$(echo "$cpu_usage" | awk '{print $4}' | cut -d'%' -f1)
@@ -1579,7 +1637,7 @@ collect_cpu_usage() {
     
     # 使用vmstat获取更准确的CPU使用率
     if is_tool_available "vmstat"; then
-        local vmstat_output=$(vmstat 2>/dev/null | tail -1)
+        local vmstat_output=$(run_cmd "vmstat" 2>/dev/null | tail -1)
         if [ -n "$vmstat_output" ]; then
             local us=$(echo "$vmstat_output" | awk '{print $13}')
             local sy=$(echo "$vmstat_output" | awk '{print $14}')
@@ -1644,7 +1702,7 @@ collect_memory_usage() {
     append_to_file "|------|----|-------|"
     
     if is_tool_available "free"; then
-        local mem_info=$(free -b 2>/dev/null)
+        local mem_info=$(run_cmd "free -b" 2>/dev/null)
         
         local total_mem=$(echo "$mem_info" | grep "Mem:" | awk '{print $2}')
         local used_mem=$(echo "$mem_info" | grep "Mem:" | awk '{print $3}')
@@ -1824,7 +1882,7 @@ collect_disk_usage() {
     
     if command -v iostat &>/dev/null; then
         append_to_file "\`\`\`"
-        iostat -x 2>/dev/null >> "$OUTPUT_FILE" || echo "iostat不可用" >> "$OUTPUT_FILE"
+        run_cmd_raw "iostat -x 2>/dev/null >> \"$OUTPUT_FILE\"" || echo "iostat不可用" >> "$OUTPUT_FILE"
         append_to_file "\`\`\`"
     else
         append_to_file "> ⚠️  iostat不可用（需要安装sysstat包）\n"
