@@ -6,6 +6,133 @@
 # 注意：不使用 set -e，因为我们希望脚本在部分工具不可用时继续运行
 # 而是使用适当的错误处理和回退机制
 
+# Debug模式（默认关闭，使用 -d 参数启用）
+DEBUG_MODE=false
+
+# 命令行参数解析
+parse_args() {
+    while getopts "dh" opt; do
+        case $opt in
+            d)
+                DEBUG_MODE=true
+                ;;
+            h)
+                echo "用法: $0 [选项]"
+                echo ""
+                echo "选项:"
+                echo "  -d    启用Debug模式，打印详细执行过程"
+                echo "  -h    显示此帮助信息"
+                echo ""
+                echo "示例:"
+                echo "  $0          正常运行"
+                echo "  $0 -d       Debug模式运行"
+                echo "  sudo $0     使用root权限运行以获取完整硬件信息"
+                exit 0
+                ;;
+            \?)
+                echo "无效选项: -$OPTARG" >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# 解析命令行参数
+parse_args "$@"
+
+# Debug打印函数
+debug_print() {
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} $1"
+    fi
+}
+
+# Debug函数入口追踪
+debug_enter() {
+    if [ "$DEBUG_MODE" = true ]; then
+        local func_name="${FUNCNAME[1]:-main}"
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} → 进入函数: ${CYAN}${func_name}${NC}"
+    fi
+}
+
+# Debug函数退出追踪
+debug_exit() {
+    if [ "$DEBUG_MODE" = true ]; then
+        local func_name="${FUNCNAME[1]:-main}"
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ← 退出函数: ${CYAN}${func_name}${NC}"
+    fi
+}
+
+# Debug步骤打印
+debug_step() {
+    if [ "$DEBUG_MODE" = true ]; then
+        local step="$1"
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} 步骤: ${YELLOW}${step}${NC}"
+    fi
+}
+
+# 命令执行包装函数 - 用于追踪关键命令的执行
+# 使用方法:
+#   直接执行: run_cmd "command arg1 arg2"
+#   获取输出: result=$(run_cmd "command arg1 arg2")
+#   获取输出并忽略错误: result=$(run_cmd "command arg1 arg2" 2>/dev/null)
+run_cmd() {
+    local cmd="$1"
+    local output=""
+    local exit_code=0
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}▶ 开始执行命令:${NC} ${GREEN}$cmd${NC}"
+    fi
+    
+    # 执行命令并捕获输出
+    output=$(eval "$cmd" 2>&1)
+    exit_code=$?
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        if [ $exit_code -eq 0 ]; then
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行成功:${NC} ${GREEN}$cmd${NC}"
+        else
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行失败(退出码=$exit_code):${NC} ${RED}$cmd${NC}"
+        fi
+    fi
+    
+    # 输出命令结果
+    echo "$output"
+    return $exit_code
+}
+
+# 命令执行包装函数（不捕获stderr，用于需要保留错误输出的情况）
+run_cmd_raw() {
+    local cmd="$1"
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}▶ 开始执行命令:${NC} ${GREEN}$cmd${NC}"
+    fi
+    
+    # 直接执行命令，不捕获输出
+    eval "$cmd"
+    local exit_code=$?
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        local timestamp=$(date +"%Y-%m-%d %H:%M:%S.%3N")
+        if [ $exit_code -eq 0 ]; then
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行成功:${NC} ${GREEN}$cmd${NC}"
+        else
+            echo -e "${BLUE}[DEBUG][${timestamp}]${NC} ${CYAN}◀ 命令执行失败(退出码=$exit_code):${NC} ${RED}$cmd${NC}"
+        fi
+    fi
+    
+    return $exit_code
+}
+
 # 颜色定义
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,6 +176,9 @@ print_section() {
 
 # 初始化输出文件
 init_output_file() {
+    debug_enter
+    debug_step "创建输出目录和文件"
+    
     print_info "初始化输出文件: $OUTPUT_FILE"
     
     mkdir -p "$OUTPUT_DIR"
@@ -62,7 +192,9 @@ init_output_file() {
 ---
 
 EOF
+    debug_step "输出文件初始化完成"
     print_success "输出文件初始化完成"
+    debug_exit
 }
 
 # 添加内容到输出文件
@@ -91,6 +223,9 @@ add_table_row() {
 
 # 工具检测函数
 check_tools() {
+    debug_enter
+    debug_step "开始检测工具可用性"
+    
     print_section "检测必要工具"
     
     # 定义需要检测的工具及其用途
@@ -118,9 +253,15 @@ check_tools() {
     append_to_file "| 工具名称 | 用途描述 | 检测状态 |"
     append_to_file "|---------|---------|---------|"
     
+    local total_tools=${#tools[@]}
+    local current_tool=0
+    
     for tool_info in "${tools[@]}"; do
+        current_tool=$((current_tool + 1))
         local tool_name="${tool_info%%:*}"
         local tool_desc="${tool_info#*:}"
+        
+        debug_step "检测工具 [$current_tool/$total_tools]: $tool_name"
         
         if command -v "$tool_name" &> /dev/null; then
             TOOL_STATUS["$tool_name"]="available"
@@ -134,7 +275,9 @@ check_tools() {
     done
     
     append_to_file ""
+    debug_step "工具检测完成，共检测 $total_tools 个工具"
     print_info "工具检测完成"
+    debug_exit
 }
 
 # 检查工具是否可用
@@ -178,16 +321,16 @@ collect_motherboard_info() {
     append_to_file "|-----|-----|"
     
     # 检测主板信息
-    local mb_manufacturer=$(dmidecode -s baseboard-manufacturer 2>/dev/null || echo "未知")
-    local mb_product=$(dmidecode -s baseboard-product-name 2>/dev/null || echo "未知")
-    local mb_serial=$(dmidecode -s baseboard-serial-number 2>/dev/null || echo "未知")
-    local mb_version=$(dmidecode -s baseboard-version 2>/dev/null || echo "未知")
+    local mb_manufacturer=$(run_cmd "dmidecode -s baseboard-manufacturer" 2>/dev/null || echo "未知")
+    local mb_product=$(run_cmd "dmidecode -s baseboard-product-name" 2>/dev/null || echo "未知")
+    local mb_serial=$(run_cmd "dmidecode -s baseboard-serial-number" 2>/dev/null || echo "未知")
+    local mb_version=$(run_cmd "dmidecode -s baseboard-version" 2>/dev/null || echo "未知")
     
     # 系统信息
-    local sys_manufacturer=$(dmidecode -s system-manufacturer 2>/dev/null || echo "未知")
-    local sys_product=$(dmidecode -s system-product-name 2>/dev/null || echo "未知")
-    local sys_serial=$(dmidecode -s system-serial-number 2>/dev/null || echo "未知")
-    local sys_uuid=$(dmidecode -s system-uuid 2>/dev/null || echo "未知")
+    local sys_manufacturer=$(run_cmd "dmidecode -s system-manufacturer" 2>/dev/null || echo "未知")
+    local sys_product=$(run_cmd "dmidecode -s system-product-name" 2>/dev/null || echo "未知")
+    local sys_serial=$(run_cmd "dmidecode -s system-serial-number" 2>/dev/null || echo "未知")
+    local sys_uuid=$(run_cmd "dmidecode -s system-uuid" 2>/dev/null || echo "未知")
     
     add_table_row "主板制造商" "$mb_manufacturer"
     add_table_row "主板型号" "$mb_product"
@@ -211,7 +354,7 @@ collect_cpu_info() {
     
     # 使用lscpu获取CPU信息
     if is_tool_available "lscpu"; then
-        local cpu_info=$(lscpu 2>/dev/null)
+        local cpu_info=$(run_cmd "lscpu" 2>/dev/null)
         
         local cpu_model=$(echo "$cpu_info" | grep "Model name" | cut -d: -f2 | xargs || echo "未知")
         local cpu_vendor=$(echo "$cpu_info" | grep "Vendor ID" | cut -d: -f2 | xargs || echo "未知")
@@ -744,10 +887,15 @@ collect_other_hardware_info() {
 
 # 1. 操作系统信息
 collect_os_info() {
+    debug_enter
+    debug_step "采集操作系统基础信息"
+    
     add_section "操作系统信息"
     
     append_to_file "| 项目 | 值 |"
     append_to_file "|-----|-----|"
+    
+    debug_step "读取 /etc/os-release 文件"
     
     # 从/etc/os-release获取信息
     if [ -f /etc/os-release ]; then
@@ -768,6 +916,8 @@ collect_os_info() {
         add_table_row "官方网站" "$home_url"
     fi
     
+    debug_step "获取内核信息 (uname)"
+    
     # 内核信息
     local kernel_version=$(uname -r 2>/dev/null || echo "未知")
     local kernel_release=$(uname -v 2>/dev/null || echo "未知")
@@ -780,10 +930,14 @@ collect_os_info() {
     add_table_row "主机名" "$hostname"
     
     # 启动时间
+    debug_step "获取系统启动时间"
+    
     if command -v uptime &>/dev/null; then
         local uptime_info=$(uptime -s 2>/dev/null || echo "未知")
         add_table_row "系统启动时间" "$uptime_info"
     fi
+    
+    debug_step "读取 /proc/uptime 计算运行时间"
     
     # 运行时间
     if [ -f /proc/uptime ]; then
@@ -793,6 +947,8 @@ collect_os_info() {
         local mins=$(( (uptime_sec % 3600) / 60 ))
         add_table_row "运行时间" "${days}天 ${hours}小时 ${mins}分钟"
     fi
+    
+    debug_step "获取语言环境和时区信息"
     
     # 语言环境
     local lang=$(echo "$LANG" 2>/dev/null || echo "未知")
@@ -808,7 +964,9 @@ collect_os_info() {
     fi
     
     append_to_file ""
+    debug_step "操作系统信息采集完成"
     print_success "操作系统信息采集完成"
+    debug_exit
 }
 
 # 2. 数据库信息检测
@@ -978,15 +1136,15 @@ collect_container_info() {
         append_to_file "|-----|-----|"
         
         # Docker版本信息
-        local docker_version=$(docker --version 2>/dev/null || echo "未知")
+        local docker_version=$(run_cmd "docker --version" 2>/dev/null || echo "未知")
         add_table_row "版本" "$docker_version"
         
         # 检测Docker服务状态
-        if docker info 2>/dev/null; then
+        if run_cmd "docker info" 2>/dev/null; then
             add_table_row "服务状态" "✅ 运行中"
             
             # 获取详细信息
-            local docker_info=$(docker info 2>/dev/null || true)
+            local docker_info=$(run_cmd "docker info" 2>/dev/null || true)
             local containers_running=$(echo "$docker_info" | grep "Running:" | head -1 | awk '{print $2}' || echo "0")
             local containers_paused=$(echo "$docker_info" | grep "Paused:" | head -1 | awk '{print $2}' || echo "0")
             local containers_stopped=$(echo "$docker_info" | grep "Stopped:" | head -1 | awk '{print $2}' || echo "0")
@@ -1010,7 +1168,7 @@ collect_container_info() {
             # 列出运行中的容器
             add_subsection "运行中的Docker容器"
             
-            local running_containers=$(docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+            local running_containers=$(run_cmd "docker ps --format table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
             if [ -n "$running_containers" ]; then
                 append_to_file "\`\`\`"
                 echo "$running_containers" >> "$OUTPUT_FILE"
@@ -1024,7 +1182,7 @@ collect_container_info() {
             # 列出所有容器
             add_subsection "所有Docker容器"
             
-            local all_containers=$(docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
+            local all_containers=$(run_cmd "docker ps -a --format table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null)
             if [ -n "$all_containers" ]; then
                 append_to_file "\`\`\`"
                 echo "$all_containers" >> "$OUTPUT_FILE"
@@ -1038,7 +1196,7 @@ collect_container_info() {
             # 列出镜像
             add_subsection "Docker镜像列表"
             
-            local images=$(docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null)
+            local images=$(run_cmd "docker images --format table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" 2>/dev/null)
             if [ -n "$images" ]; then
                 append_to_file "\`\`\`"
                 echo "$images" >> "$OUTPUT_FILE"
@@ -1454,7 +1612,7 @@ collect_cpu_usage() {
     
     # 使用top获取CPU使用率
     if is_tool_available "top"; then
-        local cpu_usage=$(top -bn1 2>/dev/null | grep "Cpu(s)" | head -1)
+        local cpu_usage=$(run_cmd "top -bn1" 2>/dev/null | grep "Cpu(s)" | head -1)
         if [ -n "$cpu_usage" ]; then
             local user=$(echo "$cpu_usage" | awk '{print $2}' | cut -d'%' -f1)
             local system=$(echo "$cpu_usage" | awk '{print $4}' | cut -d'%' -f1)
@@ -1479,7 +1637,7 @@ collect_cpu_usage() {
     
     # 使用vmstat获取更准确的CPU使用率
     if is_tool_available "vmstat"; then
-        local vmstat_output=$(vmstat 2>/dev/null | tail -1)
+        local vmstat_output=$(run_cmd "vmstat" 2>/dev/null | tail -1)
         if [ -n "$vmstat_output" ]; then
             local us=$(echo "$vmstat_output" | awk '{print $13}')
             local sy=$(echo "$vmstat_output" | awk '{print $14}')
@@ -1544,7 +1702,7 @@ collect_memory_usage() {
     append_to_file "|------|----|-------|"
     
     if is_tool_available "free"; then
-        local mem_info=$(free -b 2>/dev/null)
+        local mem_info=$(run_cmd "free -b" 2>/dev/null)
         
         local total_mem=$(echo "$mem_info" | grep "Mem:" | awk '{print $2}')
         local used_mem=$(echo "$mem_info" | grep "Mem:" | awk '{print $3}')
@@ -1724,7 +1882,7 @@ collect_disk_usage() {
     
     if command -v iostat &>/dev/null; then
         append_to_file "\`\`\`"
-        iostat -x 2>/dev/null >> "$OUTPUT_FILE" || echo "iostat不可用" >> "$OUTPUT_FILE"
+        run_cmd_raw "iostat -x 2>/dev/null >> \"$OUTPUT_FILE\"" || echo "iostat不可用" >> "$OUTPUT_FILE"
         append_to_file "\`\`\`"
     else
         append_to_file "> ⚠️  iostat不可用（需要安装sysstat包）\n"
@@ -1944,38 +2102,70 @@ generate_summary() {
 # ==================== 主函数 ====================
 
 main() {
+    debug_enter
+    
+    if [ "$DEBUG_MODE" = true ]; then
+        print_section "Debug模式已启用"
+        print_info "Debug模式：详细执行信息将被打印"
+        print_info "使用 -h 参数查看帮助信息"
+        echo ""
+    fi
+    
     print_section "Linux 系统设备信息采集脚本"
     
     # 1. 初始化输出文件
+    debug_step "初始化输出文件"
     init_output_file
     
     # 2. 检测必要工具
+    debug_step "检测必要工具"
     check_tools
     
     # 3. 采集操作系统基础信息
+    debug_step "采集操作系统基础信息"
     print_section "采集操作系统信息"
     collect_os_info
     
     # 4. 采集硬件信息
     print_section "采集硬件信息"
+    
+    debug_step "采集主板信息"
     collect_motherboard_info
+    
+    debug_step "采集CPU信息"
     collect_cpu_info
+    
+    debug_step "采集内存信息"
     collect_memory_info
+    
+    debug_step "采集磁盘信息"
     collect_disk_info
+    
+    debug_step "采集网卡信息"
     collect_network_info
+    
+    debug_step "采集其他硬件信息"
     collect_other_hardware_info
     
     # 5. 采集软件信息
     print_section "采集软件信息"
+    
+    debug_step "采集数据库信息"
     collect_database_info
+    
+    debug_step "采集容器组件信息"
     collect_container_info
+    
+    debug_step "采集其他软件信息"
     collect_other_software_info
     
     # 6. 采集系统运行状态
+    debug_step "采集系统运行状态"
     print_section "采集系统运行状态"
     collect_system_status
     
     # 7. 生成汇总报告
+    debug_step "生成汇总报告"
     print_section "生成汇总报告"
     generate_skip_report
     generate_summary
@@ -1997,6 +2187,8 @@ main() {
         print_warning "有 ${#SKIPPED_SECTIONS[@]} 项检测被跳过，请查看报告中的跳过项目汇总"
         print_warning "建议使用root权限运行以获取最完整的信息"
     fi
+    
+    debug_exit
 }
 
 # 运行主函数
