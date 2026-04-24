@@ -82,12 +82,21 @@ select_interface() {
         echo "  $((i+1)). ${interfaces[$i]}"
     done
     while true; do
-        read -p "请选择要监控的网卡 (1-${#interfaces[@]}): " choice
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#interfaces[@]} )); then
-            echo "${interfaces[$((choice-1))]}"
-            return
+        read -p "请输入要监控的网卡编号或名称: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            if (( choice >= 1 && choice <= ${#interfaces[@]} )); then
+                echo "${interfaces[$((choice-1))]}"
+                return
+            fi
+        else
+            for iface in "${interfaces[@]}"; do
+                if [[ "$iface" == "$choice" ]]; then
+                    echo "$iface"
+                    return
+                fi
+            done
         fi
-        echo "无效的选择，请重试"
+        echo "无效的选择，请输入有效的编号或网卡名称"
     done
 }
 
@@ -97,9 +106,25 @@ cleanup() {
     exit 0
 }
 
+get_all_interface_stats() {
+    local interfaces=("$@")
+    local result=""
+    for iface in "${interfaces[@]}"; do
+        local stats=$(get_interface_stats "$iface")
+        if [[ -z "$stats" ]]; then
+            echo ""
+            return
+        fi
+        result+="$iface:$stats "
+    done
+    echo "$result"
+}
+
 main() {
     local interval=$DEFAULT_INTERVAL
-    local target_iface=""
+    local interfaces=()
+    local monitor_all=false
+    
     if [[ ! -f "$PROC_NET_DEV" ]]; then
         echo "错误: 无法读取 $PROC_NET_DEV，文件不存在"
         exit 1
@@ -108,20 +133,25 @@ main() {
         echo "错误: 无法读取 $PROC_NET_DEV，权限不足"
         exit 1
     fi
+    
     if [[ $# -ge 1 ]]; then
-        target_iface=$1
+        local target_iface=$1
         if ! interface_exists "$target_iface"; then
             echo "错误: 网卡 '$target_iface' 不存在或不是物理网卡"
             echo "可用的物理网卡: $(get_available_interfaces)"
             exit 1
         fi
+        interfaces=("$target_iface")
     else
-        target_iface=$(select_interface)
-        if [[ -z "$target_iface" ]]; then
-            echo "错误: 无法选择网卡"
+        monitor_all=true
+        local all_interfaces=($(get_available_interfaces))
+        if [[ ${#all_interfaces[@]} -eq 0 ]]; then
+            echo "错误: 未找到可用的物理网卡"
             exit 1
         fi
+        interfaces=("${all_interfaces[@]}")
     fi
+    
     if [[ $# -ge 2 ]]; then
         if [[ "$2" =~ ^[0-9]+([.][0-9]+)?$ ]] && (( $(echo "$2 > 0" | bc -l) )); then
             interval=$2
@@ -129,52 +159,106 @@ main() {
             echo "警告: 无效的采样间隔 '$2'，使用默认值 $DEFAULT_INTERVAL 秒"
         fi
     fi
+    
     trap cleanup SIGINT SIGTERM
     tput civis
-    clear
+    
+    if $monitor_all; then
+        echo "正在监控所有物理网卡: ${interfaces[*]} (按 Ctrl+C 退出)"
+    else
+        echo "正在监控网卡: ${interfaces[0]} (按 Ctrl+C 退出)"
+    fi
+    echo ""
     printf "%-20s | %-15s | %-20s | %-20s\n" "时间戳" "网卡名称" "接收速率 (RX)" "发送速率 (TX)"
     printf "%s\n" "-------------------------------------------------------------------------------------------------"
-    local stats1=$(get_interface_stats "$target_iface")
-    if [[ -z "$stats1" ]]; then
-        echo "错误: 无法获取网卡 $target_iface 的统计信息"
+    
+    declare -A rx_prev
+    declare -A tx_prev
+    local stats_str=$(get_all_interface_stats "${interfaces[@]}")
+    if [[ -z "$stats_str" ]]; then
+        echo "错误: 无法获取网卡统计信息"
         tput cnorm
         exit 1
     fi
-    local rx1=$(echo "$stats1" | awk '{print $1}')
-    local tx1=$(echo "$stats1" | awk '{print $2}')
-    local time1=$(date +%s)
+    
+    for entry in $stats_str; do
+        local iface=$(echo "$entry" | cut -d: -f1)
+        local rx=$(echo "$entry" | cut -d: -f2 | awk '{print $1}')
+        local tx=$(echo "$entry" | cut -d: -f2 | awk '{print $2}')
+        rx_prev["$iface"]=$rx
+        tx_prev["$iface"]=$tx
+    done
+    
+    local time_prev=$(date +%s)
+    local first_iteration=true
+    local num_interfaces=${#interfaces[@]}
+    
+    tput sc
+    
     while true; do
         sleep $interval
-        local stats2=$(get_interface_stats "$target_iface")
-        if [[ -z "$stats2" ]]; then
-            echo -e "\n错误: 无法获取网卡 $target_iface 的统计信息"
+        
+        stats_str=$(get_all_interface_stats "${interfaces[@]}")
+        if [[ -z "$stats_str" ]]; then
+            echo -e "\n错误: 无法获取网卡统计信息"
             tput cnorm
             exit 1
         fi
-        local rx2=$(echo "$stats2" | awk '{print $1}')
-        local tx2=$(echo "$stats2" | awk '{print $2}')
-        local time2=$(date +%s)
-        local time_diff=$((time2 - time1))
+        
+        declare -A rx_curr
+        declare -A tx_curr
+        for entry in $stats_str; do
+            local iface=$(echo "$entry" | cut -d: -f1)
+            local rx=$(echo "$entry" | cut -d: -f2 | awk '{print $1}')
+            local tx=$(echo "$entry" | cut -d: -f2 | awk '{print $2}')
+            rx_curr["$iface"]=$rx
+            tx_curr["$iface"]=$tx
+        done
+        
+        local time_curr=$(date +%s)
+        local time_diff=$((time_curr - time_prev))
         if (( time_diff == 0 )); then
             time_diff=1
         fi
-        local rx_diff=$((rx2 - rx1))
-        local tx_diff=$((tx2 - tx1))
-        if (( rx_diff < 0 )); then
-            rx_diff=0
-        fi
-        if (( tx_diff < 0 )); then
-            tx_diff=0
-        fi
-        local rx_rate=$((rx_diff / time_diff))
-        local tx_rate=$((tx_diff / time_diff))
+        
         local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-        local rx_formatted=$(format_speed $rx_rate)
-        local tx_formatted=$(format_speed $tx_rate)
-        printf "\r%-20s | %-15s | %-20s | %-20s" "$timestamp" "$target_iface" "$rx_formatted" "$tx_formatted"
-        rx1=$rx2
-        tx1=$tx2
-        time1=$time2
+        
+        if ! $first_iteration; then
+            tput rc
+            tput ed
+        fi
+        
+        first_iteration=false
+        
+        for iface in "${interfaces[@]}"; do
+            local rx1=${rx_prev["$iface"]}
+            local tx1=${tx_prev["$iface"]}
+            local rx2=${rx_curr["$iface"]}
+            local tx2=${tx_curr["$iface"]}
+            
+            local rx_diff=$((rx2 - rx1))
+            local tx_diff=$((tx2 - tx1))
+            
+            if (( rx_diff < 0 )); then
+                rx_diff=0
+            fi
+            if (( tx_diff < 0 )); then
+                tx_diff=0
+            fi
+            
+            local rx_rate=$((rx_diff / time_diff))
+            local tx_rate=$((tx_diff / time_diff))
+            
+            local rx_formatted=$(format_speed $rx_rate)
+            local tx_formatted=$(format_speed $tx_rate)
+            
+            printf "%-20s | %-15s | %-20s | %-20s\n" "$timestamp" "$iface" "$rx_formatted" "$tx_formatted"
+            
+            rx_prev["$iface"]=$rx2
+            tx_prev["$iface"]=$tx2
+        done
+        
+        time_prev=$time_curr
     done
 }
 
