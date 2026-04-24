@@ -113,7 +113,7 @@ static int __init gpio_driver_init(void)
         return ret;
     }
     
-    gpio_class = class_create(THIS_MODULE, "gpio_driver");
+    gpio_class = class_create("gpio_driver");
     if (IS_ERR(gpio_class)) {
         printk(KERN_ERR "gpio_driver: Failed to create device class\n");
         cdev_del(&gpio_cdev);
