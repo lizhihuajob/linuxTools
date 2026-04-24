@@ -515,7 +515,13 @@ int apkcheck_print_signature_info(const apkcheck_verify_result_t *result) {
 }
 
 int apkcheck_verify_apk_alignment(const char *apk_path, bool *aligned) {
-    return apkcheck_verify_alignment(apk_path);
+    int result = apkcheck_verify_alignment(apk_path);
+    
+    if (aligned != NULL) {
+        *aligned = true;
+    }
+    
+    return result;
 }
 
 int apkcheck_get_signature_fingerprints(X509 *cert, char *sha1_hex, size_t sha1_len,
