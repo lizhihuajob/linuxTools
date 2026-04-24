@@ -16,19 +16,6 @@ extern "C" {
 #define APK_ALIGNMENT 4
 
 typedef struct {
-    char name[256];
-    char digest_sha1[64];
-    char digest_sha256[128];
-} apkcheck_manifest_entry_t;
-
-typedef struct {
-    apkcheck_manifest_entry_t *entries;
-    size_t entry_count;
-    size_t entry_capacity;
-    char version[32];
-} apkcheck_manifest_t;
-
-typedef struct {
     apkcheck_digest_alg_t digest_alg;
     apkcheck_sig_alg_t sig_alg;
     char created_by[128];

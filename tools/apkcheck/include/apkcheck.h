@@ -60,6 +60,19 @@ typedef struct {
 } apkcheck_buffer_t;
 
 typedef struct {
+    char name[256];
+    char digest_sha1[64];
+    char digest_sha256[128];
+} apkcheck_manifest_entry_t;
+
+typedef struct apkcheck_manifest_t {
+    apkcheck_manifest_entry_t *entries;
+    size_t entry_count;
+    size_t entry_capacity;
+    char version[32];
+} apkcheck_manifest_t;
+
+typedef struct {
     char alias[APKCHECK_MAX_ALIAS_LEN];
     char storepass[APKCHECK_MAX_PASSWORD_LEN];
     char keypass[APKCHECK_MAX_PASSWORD_LEN];
