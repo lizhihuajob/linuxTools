@@ -123,43 +123,36 @@
   setup:
     filter: ansible_mounts
 
-- name: 过滤并计算磁盘使用率
+- name: 初始化磁盘信息列表
   set_fact:
-    disk_info: >-
-      [
-      {% for mount in ansible_mounts %}
-        {% if mount.fstype not in exclude_fs_types and mount.size_total | int > 0 %}
-          {
-            "mount": "{{ mount.mount }}",
-            "device": "{{ mount.device | default('Unknown') }}",
-            "fstype": "{{ mount.fstype }}",
-            "size_total_mb": "{{ (mount.size_total | int / 1024 / 1024) | round(2) }}",
-            "size_available_mb": "{{ (mount.size_available | int / 1024 / 1024) | round(2) }}",
-            "size_used_mb": "{{ ((mount.size_total | int - mount.size_available | int) / 1024 / 1024) | round(2) }}",
-            "usage_percent": "{{ ((mount.size_total | int - mount.size_available | int) / mount.size_total | int * 100) | round(2) }}",
-            "status": "{% if ((mount.size_total | int - mount.size_available | int) / mount.size_total | int * 100) | float >= disk_critical_threshold | float %}critical{% elif ((mount.size_total | int - mount.size_available | int) / mount.size_total | int * 100) | float >= disk_warning_threshold | float %}warning{% else %}normal{% endif %}"
-          }
-          {% if not loop.last %},{% endif %}
-        {% endif %}
-      {% endfor %}
-      ]
+    disk_info_list: []
+    disk_status: 'normal'
 
-- name: 解析磁盘信息为实际列表
-  set_fact:
-    disk_info_list: "{{ disk_info | from_json }}"
+- name: 过滤并计算磁盘使用率（遍历处理）
+  include_tasks: process_disk.yml
+  loop: "{{ ansible_mounts }}"
+  loop_control:
+    loop_var: mount_item
+  when:
+    - ansible_mounts is defined
+    - ansible_mounts | length > 0
 
 - name: 判断整体磁盘状态
   set_fact:
     disk_status: >-
-      {% set ns = namespace(status='normal') %}
-      {% for disk in disk_info_list %}
-        {% if disk.status == 'critical' %}
-          {% set ns.status = 'critical' %}
-        {% elif disk.status == 'warning' and ns.status == 'normal' %}
-          {% set ns.status = 'warning' %}
-        {% endif %}
-      {% endfor %}
-      {{ ns.status }}
+      {% if disk_info_list | length == 0 %}
+        normal
+      {% else %}
+        {% set ns = namespace(status='normal') %}
+        {% for disk in disk_info_list %}
+          {% if disk.status == 'critical' %}
+            {% set ns.status = 'critical' %}
+          {% elif disk.status == 'warning' and ns.status == 'normal' %}
+            {% set ns.status = 'warning' %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.status }}
+      {% endif %}
 
 - name: 设置资源监控事实
   set_fact:
