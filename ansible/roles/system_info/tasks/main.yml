@@ -1,0 +1,56 @@
+---
+# 系统基础信息采集角色
+
+- name: 收集系统基础信息
+  setup:
+    gather_subset:
+      - 'all'
+      - '!facter'
+      - '!ohai'
+
+- name: 获取系统运行时间
+  shell: |
+    uptime -p 2>/dev/null || uptime
+  register: system_uptime
+  changed_when: false
+  ignore_errors: true
+
+- name: 获取当前时间
+  setup:
+    filter: ansible_date_time
+
+- name: 获取系统架构信息
+  setup:
+    filter:
+      - ansible_architecture
+      - ansible_machine
+
+- name: 设置系统信息事实
+  set_fact:
+    system_info:
+      hostname: "{{ ansible_hostname | default('Unknown') }}"
+      fqdn: "{{ ansible_fqdn | default('Unknown') }}"
+      os_family: "{{ ansible_os_family | default('Unknown') }}"
+      os_distribution: "{{ ansible_distribution | default('Unknown') }}"
+      os_version: "{{ ansible_distribution_version | default('Unknown') }}"
+      os_release: "{{ ansible_distribution_release | default('Unknown') }}"
+      kernel_version: "{{ ansible_kernel | default('Unknown') }}"
+      architecture: "{{ ansible_architecture | default('Unknown') }}"
+      machine: "{{ ansible_machine | default('Unknown') }}"
+      uptime: "{{ system_uptime.stdout | default('Unknown') }}"
+      current_time: "{{ ansible_date_time.iso8601 | default('Unknown') }}"
+      timezone: "{{ ansible_date_time.tz | default('Unknown') }}"
+      processor_count: "{{ ansible_processor_count | default(0) }}"
+      processor_cores: "{{ ansible_processor_cores | default(0) }}"
+      processor_vcpus: "{{ ansible_processor_vcpus | default(0) }}"
+      memtotal_mb: "{{ ansible_memtotal_mb | default(0) }}"
+      swaptotal_mb: "{{ ansible_swaptotal_mb | default(0) }}"
+      product_name: "{{ ansible_product_name | default('Unknown') }}"
+      product_serial: "{{ ansible_product_serial | default('Unknown') }}"
+      virtualization_role: "{{ ansible_virtualization_role | default('Unknown') }}"
+      virtualization_type: "{{ ansible_virtualization_type | default('Unknown') }}"
+
+- name: 调试输出系统信息
+  debug:
+    var: system_info
+    verbosity: 2

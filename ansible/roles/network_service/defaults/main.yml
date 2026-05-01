@@ -1,0 +1,4 @@
+---
+# network_service 角色默认变量
+network_check_enabled: true
+service_check_enabled: true

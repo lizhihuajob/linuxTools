@@ -1,0 +1,272 @@
+---
+# 网络与服务检查角色
+
+- name: 获取默认网关
+  shell: |
+    ip route show default 2>/dev/null | awk '/default/ {print $3}' | head -1 || \
+    route -n 2>/dev/null | awk '/^0.0.0.0/ {print $2}' | head -1 || \
+    netstat -rn 2>/dev/null | awk '/^0.0.0.0/ {print $2}' | head -1
+  register: default_gateway
+  changed_when: false
+  ignore_errors: true
+
+- name: 设置网关事实
+  set_fact:
+    gateway_ip: "{{ default_gateway.stdout | default('') }}"
+
+- name: 检查网关连通性
+  block:
+    - name: Ping 网关 (CentOS/RedHat)
+      command: ping -c 3 -W 2 {{ gateway_ip }}
+      register: gateway_ping_result
+      changed_when: false
+      ignore_errors: true
+      when:
+        - gateway_ip | length > 0
+        - ansible_os_family == 'RedHat'
+
+    - name: Ping 网关 (Ubuntu/Debian)
+      command: ping -c 3 -W 2 {{ gateway_ip }}
+      register: gateway_ping_result
+      changed_when: false
+      ignore_errors: true
+      when:
+        - gateway_ip | length > 0
+        - ansible_os_family == 'Debian'
+
+    - name: 检查网关 Ping 结果
+      set_fact:
+        gateway_status: "{{ 'normal' if gateway_ping_result.rc == 0 else 'critical' }}"
+        gateway_packet_loss: >-
+          {% if gateway_ping_result.rc == 0 %}
+            {{ gateway_ping_result.stdout | regex_search('([0-9]+)% packet loss', '\\1') | first | default('0') }}%
+          {% else %}
+            100%
+          {% endif %}
+      when: gateway_ping_result is defined and gateway_ping_result.skipped is not defined
+  when:
+    - gateway_check_enabled | bool
+    - gateway_ip | length > 0
+
+- name: 设置默认网关状态
+  set_fact:
+    gateway_status: 'unknown'
+    gateway_ip: '未检测到网关'
+    gateway_packet_loss: 'N/A'
+  when: gateway_status is not defined
+
+- name: 检查 DNS 连通性
+  block:
+    - name: Ping DNS 服务器
+      command: ping -c 2 -W 2 {{ item }}
+      register: dns_ping_results
+      with_items: "{{ dns_servers }}"
+      changed_when: false
+      ignore_errors: true
+
+    - name: 分析 DNS 检查结果
+      set_fact:
+        dns_status_list: >-
+          [
+          {% for result in dns_ping_results.results %}
+            {
+              "dns_server": "{{ result.item }}",
+              "status": "{{ 'normal' if result.rc == 0 else 'critical' }}",
+              "reachable": "{{ result.rc == 0 }}"
+            }
+            {% if not loop.last %},{% endif %}
+          {% endfor %}
+          ]
+
+    - name: 解析 DNS 状态列表
+      set_fact:
+        dns_status_parsed: "{{ dns_status_list | from_json }}"
+
+    - name: 判断整体 DNS 状态
+      set_fact:
+        dns_overall_status: >-
+          {% set ns = namespace(status='critical', reachable=0) %}
+          {% for dns in dns_status_parsed %}
+            {% if dns.reachable %}
+              {% set ns.reachable = ns.reachable + 1 %}
+            {% endif %}
+          {% endfor %}
+          {% if ns.reachable == dns_status_parsed | length %}
+            normal
+          {% elif ns.reachable > 0 %}
+            warning
+          {% else %}
+            critical
+          {% endif %}
+  when: dns_check_enabled | bool
+
+- name: 设置默认 DNS 状态
+  set_fact:
+    dns_status_parsed: []
+    dns_overall_status: 'unknown'
+  when: dns_status_parsed is not defined
+
+- name: 确定服务管理工具
+  set_fact:
+    service_mgr: >-
+      {% if ansible_service_mgr is defined %}
+        {{ ansible_service_mgr }}
+      {% elif ansible_os_family == 'RedHat' %}
+        {% if ansible_distribution_version | float >= 7 %}
+          systemd
+        {% else %}
+          sysvinit
+        {% endif %}
+      {% elif ansible_os_family == 'Debian' %}
+        {% if ansible_distribution == 'Ubuntu' and ansible_distribution_version | float >= 15.04 %}
+          systemd
+        {% elif ansible_distribution == 'Debian' and ansible_distribution_version | float >= 8 %}
+          systemd
+        {% else %}
+          sysvinit
+        {% endif %}
+      {% else %}
+        systemd
+      {% endif %}
+
+- name: 检查服务状态 (systemd)
+  block:
+    - name: 使用 systemctl 检查服务状态
+      command: systemctl is-active {{ item }}
+      register: service_status_results
+      with_items: "{{ common_services + additional_services }}"
+      changed_when: false
+      ignore_errors: true
+      failed_when: false
+
+    - name: 解析服务状态结果
+      set_fact:
+        services_status_list: >-
+          [
+          {% for result in service_status_results.results %}
+            {
+              "service_name": "{{ result.item }}",
+              "status": "{{ 'normal' if result.rc == 0 else 'critical' }}",
+              "active": "{{ result.rc == 0 }}",
+              "output": "{{ result.stdout | default('') | truncate(100) }}"
+            }
+            {% if not loop.last %},{% endif %}
+          {% endfor %}
+          ]
+  when: service_mgr == 'systemd'
+
+- name: 检查服务状态 (sysvinit - RedHat)
+  block:
+    - name: 使用 service 命令检查服务状态 (RedHat)
+      command: service {{ item }} status
+      register: service_status_results
+      with_items: "{{ common_services + additional_services }}"
+      changed_when: false
+      ignore_errors: true
+      failed_when: false
+
+    - name: 解析服务状态结果 (sysvinit)
+      set_fact:
+        services_status_list: >-
+          [
+          {% for result in service_status_results.results %}
+            {
+              "service_name": "{{ result.item }}",
+              "status": "{{ 'normal' if ('running' in result.stdout.lower() or 'active' in result.stdout.lower()) or result.rc == 0 else 'critical' }}",
+              "active": "{{ 'running' in result.stdout.lower() or 'active' in result.stdout.lower() or result.rc == 0 }}",
+              "output": "{{ result.stdout | default('') | truncate(100) }}"
+            }
+            {% if not loop.last %},{% endif %}
+          {% endfor %}
+          ]
+  when:
+    - service_mgr == 'sysvinit'
+    - ansible_os_family == 'RedHat'
+
+- name: 检查服务状态 (sysvinit - Debian)
+  block:
+    - name: 使用 service 命令检查服务状态 (Debian)
+      command: service {{ item }} status
+      register: service_status_results
+      with_items: "{{ common_services + additional_services }}"
+      changed_when: false
+      ignore_errors: true
+      failed_when: false
+
+    - name: 解析服务状态结果 (sysvinit Debian)
+      set_fact:
+        services_status_list: >-
+          [
+          {% for result in service_status_results.results %}
+            {
+              "service_name": "{{ result.item }}",
+              "status": "{{ 'normal' if ('running' in result.stdout.lower() or 'is running' in result.stdout.lower()) or result.rc == 0 else 'critical' }}",
+              "active": "{{ 'running' in result.stdout.lower() or 'is running' in result.stdout.lower() or result.rc == 0 }}",
+              "output": "{{ result.stdout | default('') | truncate(100) }}"
+            }
+            {% if not loop.last %},{% endif %}
+          {% endfor %}
+          ]
+  when:
+    - service_mgr == 'sysvinit'
+    - ansible_os_family == 'Debian'
+
+- name: 解析服务状态列表
+  set_fact:
+    services_status_parsed: "{{ services_status_list | from_json }}"
+  when: services_status_list is defined
+
+- name: 判断整体服务状态
+  set_fact:
+    services_overall_status: >-
+      {% set ns = namespace(status='normal', failed=0) %}
+      {% for service in services_status_parsed %}
+        {% if not service.active %}
+          {% set ns.failed = ns.failed + 1 %}
+        {% endif %}
+      {% endfor %}
+      {% if ns.failed == services_status_parsed | length %}
+        critical
+      {% elif ns.failed > 0 %}
+        warning
+      {% else %}
+        normal
+      {% endif %}
+  when: services_status_parsed is defined
+
+- name: 设置默认服务状态
+  set_fact:
+    services_status_parsed: []
+    services_overall_status: 'unknown'
+  when: services_status_parsed is not defined
+
+- name: 获取网络接口信息
+  setup:
+    filter: ansible_interfaces
+
+- name: 获取详细网络配置
+  setup:
+    filter: ansible_{{ item }}
+  with_items: "{{ ansible_interfaces }}"
+  ignore_errors: true
+  register: network_interface_details
+
+- name: 设置网络事实
+  set_fact:
+    network_info:
+      gateway:
+        ip: "{{ gateway_ip | default('N/A') }}"
+        status: "{{ gateway_status | default('unknown') }}"
+        packet_loss: "{{ gateway_packet_loss | default('N/A') }}"
+      dns:
+        servers: "{{ dns_status_parsed | default([]) }}"
+        overall_status: "{{ dns_overall_status | default('unknown') }}"
+      services:
+        list: "{{ services_status_parsed | default([]) }}"
+        overall_status: "{{ services_overall_status | default('unknown') }}"
+        service_manager: "{{ service_mgr | default('unknown') }}"
+
+- name: 调试输出网络与服务信息
+  debug:
+    var: network_info
+    verbosity: 2

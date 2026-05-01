@@ -1,0 +1,175 @@
+# 🔍 企业服务器自动化巡检报告
+
+> **巡检时间**: {{ inspection_summary.inspection_time }}  
+> **报告生成时间**: {{ lookup('pipe', 'date +%Y-%m-%d %H:%M:%S') }}  
+> **报告时间戳**: {{ inspection_summary.report_timestamp }}
+
+---
+
+## 📊 巡检概览
+
+| 指标 | 数值 |
+|------|------|
+| 总服务器数 | {{ inspection_summary.total_hosts }} |
+| 状态正常 | {{ inspection_summary.normal_hosts }} 🟢 |
+| 警告状态 | {{ inspection_summary.warning_hosts }} 🟡 |
+| 严重状态 | {{ inspection_summary.critical_hosts }} 🔴 |
+
+---
+
+## 🖥️ 服务器详情
+
+{% for host in hosts_data_parsed %}
+---
+
+### {{ host.hostname }}
+
+**整体状态**: 
+{% if host.overall_host_status == 'normal' %}🟢 正常
+{% elif host.overall_host_status == 'warning' %}🟡 警告
+{% elif host.overall_host_status == 'critical' %}🔴 严重
+{% else %}⚪ 未知{% endif %}
+
+**操作系统**: {{ host.os_distribution }} {{ host.os_version }}
+
+---
+
+#### 📋 系统基本信息
+
+| 项目 | 值 |
+|------|------|
+| 主机名 | {{ host.hostname }} |
+| FQDN | {{ host.fqdn }} |
+| 操作系统 | {{ host.os_distribution }} {{ host.os_version }} |
+| 内核版本 | {{ host.kernel_version }} |
+| 系统架构 | {{ host.architecture }} |
+| 运行时间 | {{ host.uptime }} |
+| CPU 核心数 | {{ host.processor_vcpus }} 核 |
+| 总内存 | {{ (host.memtotal_mb | int / 1024) | round(2) }} GB |
+| 虚拟化类型 | {{ host.virtualization_type }} |
+
+---
+
+#### ⚡ CPU 资源监控
+
+| 项目 | 值 | 状态 |
+|------|------|------|
+| CPU 使用率 | {{ host.cpu_usage }}% | 
+{% if host.cpu_status == 'normal' %}🟢 正常
+{% elif host.cpu_status == 'warning' %}🟡 警告
+{% elif host.cpu_status == 'critical' %}🔴 严重
+{% else %}⚪ 未知{% endif %} |
+
+---
+
+#### 💾 内存资源监控
+
+| 项目 | 值 | 状态 |
+|------|------|------|
+| 内存使用率 | {{ host.memory_usage }}% | 
+{% if host.memory_status == 'normal' %}🟢 正常
+{% elif host.memory_status == 'warning' %}🟡 警告
+{% elif host.memory_status == 'critical' %}🔴 严重
+{% else %}⚪ 未知{% endif %} |
+| 已用内存 | {{ (host.memory_used_mb | int / 1024) | round(2) }} GB | - |
+| 总内存 | {{ (host.memory_total_mb | int / 1024) | round(2) }} GB | - |
+
+---
+
+#### 🔄 Swap 资源监控
+
+| 项目 | 值 | 状态 |
+|------|------|------|
+| Swap 使用率 | {{ host.swap_usage }}% | 
+{% if host.swap_status == 'normal' %}🟢 正常
+{% elif host.swap_status == 'warning' %}🟡 警告
+{% elif host.swap_status == 'critical' %}🔴 严重
+{% else %}⚪ 未知{% endif %} |
+| 总 Swap | {{ (host.swap_total_mb | int / 1024) | round(2) }} GB | - |
+
+---
+
+#### 💿 磁盘使用情况
+
+{% if host.disks | length > 0 %}
+| 挂载点 | 文件系统 | 使用率 | 状态 |
+|--------|----------|--------|------|
+{% for disk in host.disks %}
+| {{ disk.mount }} | {{ disk.fstype }} | {{ disk.usage_percent }}% | 
+{% if disk.status == 'normal' %}🟢 正常
+{% elif disk.status == 'warning' %}🟡 警告
+{% elif disk.status == 'critical' %}🔴 严重
+{% else %}⚪ 未知{% endif %} |
+{% endfor %}
+{% else %}
+暂无磁盘信息
+{% endif %}
+
+---
+
+#### 🌐 网络状态
+
+| 项目 | 值 |
+|------|------|
+| 默认网关 | {{ host.gateway_ip }} |
+| 网关状态 | 
+{% if host.gateway_status == 'normal' %}🟢 正常
+{% elif host.gateway_status == 'critical' %}🔴 不可达
+{% else %}⚪ 未知{% endif %} |
+| 丢包率 | {{ host.gateway_packet_loss }} |
+| DNS 整体状态 | 
+{% if host.dns_overall_status == 'normal' %}🟢 全部正常
+{% elif host.dns_overall_status == 'warning' %}🟡 部分正常
+{% elif host.dns_overall_status == 'critical' %}🔴 全部失败
+{% else %}⚪ 未知{% endif %} |
+
+{% if host.dns_servers | length > 0 %}
+**DNS 服务器状态**:
+{% for dns in host.dns_servers %}
+- {{ dns.dns_server }}: 
+{% if dns.reachable %}🟢 可达
+{% else %}🔴 不可达{% endif %}
+{% endfor %}
+{% endif %}
+
+---
+
+#### 🔧 服务状态
+
+| 项目 | 值 |
+|------|------|
+| 整体服务状态 | 
+{% if host.services_overall_status == 'normal' %}🟢 全部正常
+{% elif host.services_overall_status == 'warning' %}🟡 部分异常
+{% elif host.services_overall_status == 'critical' %}🔴 全部异常
+{% else %}⚪ 未知{% endif %} |
+
+{% if host.services | length > 0 %}
+**服务详情**:
+| 服务名称 | 状态 |
+|----------|------|
+{% for service in host.services %}
+| {{ service.service_name }} | 
+{% if service.active %}🟢 运行中
+{% else %}🔴 已停止{% endif %} |
+{% endfor %}
+{% else %}
+暂无服务信息
+{% endif %}
+
+{% endfor %}
+
+---
+
+## 📝 备注
+
+**告警阈值说明**:
+- 🟢 **正常**: CPU/内存/磁盘 < 80%, Swap < 70%
+- 🟡 **警告**: CPU/内存/磁盘 >= 80%, Swap >= 70%
+- 🔴 **严重**: CPU/内存/磁盘 >= 90%, Swap >= 85%
+
+**监控的服务列表**: sshd, nginx, docker, firewalld, rsyslog, cron
+
+---
+
+> 此报告由 Ansible 自动化巡检系统生成

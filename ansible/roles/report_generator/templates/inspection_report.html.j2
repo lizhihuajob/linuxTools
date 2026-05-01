@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务器自动化巡检报告 - {{ inspection_summary.inspection_time }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        .summary-section {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .summary-card .number {
+            font-size: 36px;
+            font-weight: bold;
+        }
+        .summary-card .label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .status-normal { color: #28a745; }
+        .status-warning { color: #ffc107; }
+        .status-critical { color: #dc3545; }
+        .status-unknown { color: #6c757d; }
+        .bg-normal { background-color: #d4edda; }
+        .bg-warning { background-color: #fff3cd; }
+        .bg-critical { background-color: #f8d7da; }
+        .bg-unknown { background-color: #e2e3e5; }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-normal { background-color: #d4edda; color: #155724; }
+        .badge-warning { background-color: #fff3cd; color: #856404; }
+        .badge-critical { background-color: #f8d7da; color: #721c24; }
+        .badge-unknown { background-color: #e2e3e5; color: #383d41; }
+        .hosts-section {
+            padding: 30px;
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #007bff;
+            color: #333;
+        }
+        .host-card {
+            background: #fff;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .host-header {
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        .host-header.bg-normal { border-left: 4px solid #28a745; }
+        .host-header.bg-warning { border-left: 4px solid #ffc107; }
+        .host-header.bg-critical { border-left: 4px solid #dc3545; }
+        .host-name {
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .host-info {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        .os-badge {
+            background: #007bff;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .host-content {
+            padding: 20px;
+            border-top: 1px solid #e9ecef;
+            display: none;
+        }
+        .host-content.active {
+            display: block;
+        }
+        .content-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .content-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        .content-section h4 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 14px;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 13px;
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: #666;
+        }
+        .info-value {
+            font-weight: 500;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .progress-fill {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            transition: width 0.3s ease;
+        }
+        .progress-fill.normal { background: linear-gradient(90deg, #28a745, #20c997); }
+        .progress-fill.warning { background: linear-gradient(90deg, #ffc107, #fd7e14); }
+        .progress-fill.critical { background: linear-gradient(90deg, #dc3545, #c82333); }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        th {
+            background: #e9ecef;
+            font-weight: 600;
+        }
+        tr:hover {
+            background: #f1f3f5;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+            font-size: 12px;
+            color: #666;
+        }
+        .toggle-icon {
+            transition: transform 0.3s ease;
+        }
+        .host-header.active .toggle-icon {
+            transform: rotate(180deg);
+        }
+        .expand-all-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 15px;
+        }
+        .expand-all-btn:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 企业服务器自动化巡检报告</h1>
+            <div class="subtitle">巡检时间: {{ inspection_summary.inspection_time }} | 报告生成时间: {{ lookup('pipe', 'date +%Y-%m-%d %H:%M:%S') }}</div>
+        </div>
+
+        <div class="summary-section">
+            <h2 class="section-title">📊 巡检概览</h2>
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="number">{{ inspection_summary.total_hosts }}</div>
+                    <div class="label">总服务器数</div>
+                </div>
+                <div class="summary-card">
+                    <div class="number status-normal">{{ inspection_summary.normal_hosts }}</div>
+                    <div class="label">状态正常</div>
+                </div>
+                <div class="summary-card">
+                    <div class="number status-warning">{{ inspection_summary.warning_hosts }}</div>
+                    <div class="label">警告状态</div>
+                </div>
+                <div class="summary-card">
+                    <div class="number status-critical">{{ inspection_summary.critical_hosts }}</div>
+                    <div class="label">严重状态</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="hosts-section">
+            <h2 class="section-title">🖥️ 服务器详情</h2>
+            <button class="expand-all-btn" onclick="toggleAll()">展开/收起所有</button>
+
+            {% for host in hosts_data_parsed %}
+            <div class="host-card">
+                <div class="host-header bg-{{ host.overall_host_status }}" onclick="toggleHost(this)">
+                    <div class="host-name">
+                        <span>{{ host.hostname }}</span>
+                        <span class="os-badge">{{ host.os_distribution }} {{ host.os_version }}</span>
+                    </div>
+                    <div class="host-info">
+                        <span class="badge badge-{{ host.overall_host_status }}">
+                            {% if host.overall_host_status == 'normal' %}✓ 正常
+                            {% elif host.overall_host_status == 'warning' %}⚠ 警告
+                            {% elif host.overall_host_status == 'critical' %}✗ 严重
+                            {% else %}? 未知{% endif %}
+                        </span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="host-content">
+                    <div class="content-grid">
+                        <!-- 系统基本信息 -->
+                        <div class="content-section">
+                            <h4>📋 系统基本信息</h4>
+                            <div class="info-row">
+                                <span class="info-label">主机名</span>
+                                <span class="info-value">{{ host.hostname }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">FQDN</span>
+                                <span class="info-value">{{ host.fqdn }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">操作系统</span>
+                                <span class="info-value">{{ host.os_distribution }} {{ host.os_version }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">内核版本</span>
+                                <span class="info-value">{{ host.kernel_version }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">架构</span>
+                                <span class="info-value">{{ host.architecture }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">运行时间</span>
+                                <span class="info-value">{{ host.uptime }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">CPU 核心数</span>
+                                <span class="info-value">{{ host.processor_vcpus }} 核</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">总内存</span>
+                                <span class="info-value">{{ (host.memtotal_mb | int / 1024 | round(2) }} GB</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">虚拟化类型</span>
+                                <span class="info-value">{{ host.virtualization_type }}</span>
+                            </div>
+                        </div>
+
+                        <!-- CPU 资源监控 -->
+                        <div class="content-section">
+                            <h4>⚡ CPU 资源监控</h4>
+                            <div class="info-row">
+                                <span class="info-label">CPU 使用率</span>
+                                <span class="info-value">
+                                    <span class="badge badge-{{ host.cpu_status }}">{{ host.cpu_usage }}%</span>
+                                </span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill {{ host.cpu_status }}" style="width: {{ host.cpu_usage }}%;">{{ host.cpu_usage }}%</div>
+                            </div>
+
+                            <h4 style="margin-top: 20px;">💾 内存资源监控</h4>
+                            <div class="info-row">
+                                <span class="info-label">内存使用率</span>
+                                <span class="info-value">
+                                    <span class="badge badge-{{ host.memory_status }}">{{ host.memory_usage }}%</span>
+                                </span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill {{ host.memory_status }}" style="width: {{ host.memory_usage }}%;">{{ host.memory_usage }}%</div>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">已用内存</span>
+                                <span class="info-value">{{ (host.memory_used_mb | int / 1024) | round(2) }} GB</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">总内存</span>
+                                <span class="info-value">{{ (host.memory_total_mb | int / 1024) | round(2) }} GB</span>
+                            </div>
+
+                            <h4 style="margin-top: 20px;">🔄 Swap 资源监控</h4>
+                            <div class="info-row">
+                                <span class="info-label">Swap 使用率</span>
+                                <span class="info-value">
+                                    <span class="badge badge-{{ host.swap_status }}">{{ host.swap_usage }}%</span>
+                                </span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill {{ host.swap_status }}" style="width: {{ host.swap_usage }}%;">{{ host.swap_usage }}%</div>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">总 Swap</span>
+                                <span class="info-value">{{ (host.swap_total_mb | int / 1024) | round(2) }} GB</span>
+                            </div>
+                        </div>
+
+                        <!-- 磁盘使用情况 -->
+                        <div class="content-section">
+                            <h4>💿 磁盘使用情况</h4>
+                            {% if host.disks | length > 0 %}
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>挂载点</th>
+                                        <th>文件系统</th>
+                                        <th>使用率</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for disk in host.disks %}
+                                    <tr>
+                                        <td>{{ disk.mount }}</td>
+                                        <td>{{ disk.fstype }}</td>
+                                        <td>
+                                            <div class="progress-bar" style="height: 16px; margin: 0;">
+                                                <div class="progress-fill {{ disk.status }}" style="width: {{ disk.usage_percent }}%; font-size: 10px;">{{ disk.usage_percent }}%</div>
+                                            </div>
+                                        </td>
+                                        <td><span class="badge badge-{{ disk.status }}">{{ disk.status }}</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p style="color: #666; font-size: 13px;">暂无磁盘信息</p>
+                            {% endif %}
+                        </div>
+
+                        <!-- 网络状态 -->
+                        <div class="content-section">
+                            <h4>🌐 网络状态</h4>
+                            <div class="info-row">
+                                <span class="info-label">默认网关</span>
+                                <span class="info-value">{{ host.gateway_ip }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">网关状态</span>
+                                <span class="info-value"><span class="badge badge-{{ host.gateway_status }}">{{ host.gateway_status }}</span></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">丢包率</span>
+                                <span class="info-value">{{ host.gateway_packet_loss }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">DNS 整体状态</span>
+                                <span class="info-value"><span class="badge badge-{{ host.dns_overall_status }}">{{ host.dns_overall_status }}</span></span>
+                            </div>
+                            {% if host.dns_servers | length > 0 %}
+                            <table style="margin-top: 10px;">
+                                <thead>
+                                    <tr>
+                                        <th>DNS 服务器</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for dns in host.dns_servers %}
+                                    <tr>
+                                        <td>{{ dns.dns_server }}</td>
+                                        <td><span class="badge badge-{{ dns.status }}">{{ '可达' if dns.reachable else '不可达' }}</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% endif %}
+                        </div>
+
+                        <!-- 服务状态 -->
+                        <div class="content-section">
+                            <h4>🔧 服务状态</h4>
+                            <div class="info-row">
+                                <span class="info-label">整体服务状态</span>
+                                <span class="info-value"><span class="badge badge-{{ host.services_overall_status }}">{{ host.services_overall_status }}</span></span>
+                            </div>
+                            {% if host.services | length > 0 %}
+                            <table style="margin-top: 10px;">
+                                <thead>
+                                    <tr>
+                                        <th>服务名称</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for service in host.services %}
+                                    <tr>
+                                        <td>{{ service.service_name }}</td>
+                                        <td><span class="badge badge-{{ service.status }}">{{ '运行中' if service.active else '已停止' }}</span></td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                            {% else %}
+                            <p style="color: #666; font-size: 13px;">暂无服务信息</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="footer">
+            <p>此报告由 Ansible 自动化巡检系统生成 | 报告时间戳: {{ inspection_summary.report_timestamp }}</p>
+            <p>⚠️ 警告状态: CPU/内存/磁盘 > 80% | ✗ 严重状态: CPU/内存/磁盘 > 90% | Swap > 85%</p>
+        </div>
+    </div>
+
+    <script>
+        function toggleHost(header) {
+            const content = header.nextElementSibling;
+            header.classList.toggle('active');
+            content.classList.toggle('active');
+        }
+
+        let allExpanded = false;
+        function toggleAll() {
+            const headers = document.querySelectorAll('.host-header');
+            const contents = document.querySelectorAll('.host-content');
+            allExpanded = !allExpanded;
+
+            headers.forEach(header => {
+                if (allExpanded) {
+                    header.classList.add('active');
+                } else {
+                    header.classList.remove('active');
+                }
+            });
+
+            contents.forEach(content => {
+                if (allExpanded) {
+                    content.classList.add('active');
+                } else {
+                    content.classList.remove('active');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
