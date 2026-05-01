@@ -39,20 +39,56 @@
         normal
       {% endif %}
 
-- name: 获取内存使用信息
+- name: 获取完整的内存使用信息（使用 ansible_memory_mb）
   setup:
     filter:
+      - ansible_memory_mb
       - ansible_memtotal_mb
       - ansible_memfree_mb
-      - ansible_memavailable_mb
       - ansible_swaptotal_mb
       - ansible_swapfree_mb
 
+- name: 调试输出内存事实结构
+  debug:
+    var: ansible_memory_mb
+    verbosity: 3
+
+- name: 计算可用内存（优先使用 ansible_memory_mb.real.available）
+  set_fact:
+    mem_available_mb: >-
+      {% if ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.available is defined %}
+        {{ ansible_memory_mb.real.available }}
+      {% elif ansible_memavailable_mb is defined %}
+        {{ ansible_memavailable_mb }}
+      {% elif ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.free is defined %}
+        {{ ansible_memory_mb.real.free }}
+      {% else %}
+        {{ ansible_memfree_mb | default(0) }}
+      {% endif %}
+
+- name: 计算总内存
+  set_fact:
+    mem_total_mb: >-
+      {% if ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.total is defined %}
+        {{ ansible_memory_mb.real.total }}
+      {% else %}
+        {{ ansible_memtotal_mb | default(0) }}
+      {% endif %}
+
 - name: 计算内存使用率
   set_fact:
-    mem_used_mb: "{{ (ansible_memtotal_mb | int - ansible_memavailable_mb | int) }}"
-    mem_usage_percent: "{{ ((ansible_memtotal_mb | int - ansible_memavailable_mb | int) / ansible_memtotal_mb | int * 100) | round(2) }}"
-  when: ansible_memtotal_mb | int > 0
+    mem_used_mb: "{{ (mem_total_mb | int - mem_available_mb | int) }}"
+    mem_usage_percent: >-
+      {% if mem_total_mb | int > 0 %}
+        {{ ((mem_total_mb | int - mem_available_mb | int) / mem_total_mb | int * 100) | round(2) }}
+      {% else %}
+        0
+      {% endif %}
+
+- name: 设置内存默认值（防止计算失败）
+  set_fact:
+    mem_used_mb: "{{ mem_used_mb | default(0) }}"
+    mem_usage_percent: "{{ mem_usage_percent | default(0) }}"
 
 - name: 判断内存状态
   set_fact:
@@ -134,9 +170,9 @@
         threshold_warning: "{{ cpu_warning_threshold }}"
         threshold_critical: "{{ cpu_critical_threshold }}"
       memory:
-        total_mb: "{{ ansible_memtotal_mb | default(0) }}"
+        total_mb: "{{ mem_total_mb | default(0) }}"
         used_mb: "{{ mem_used_mb | default(0) }}"
-        available_mb: "{{ ansible_memavailable_mb | default(0) }}"
+        available_mb: "{{ mem_available_mb | default(0) }}"
         usage_percent: "{{ mem_usage_percent | default(0) }}"
         status: "{{ memory_status | default('normal') }}"
         threshold_warning: "{{ memory_warning_threshold }}"
