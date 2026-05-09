@@ -1,0 +1,64 @@
+---
+# 系统巡检阈值配置
+
+# CPU 使用率阈值
+cpu_warning_threshold: 80
+cpu_critical_threshold: 90
+
+# 内存使用率阈值
+memory_warning_threshold: 80
+memory_critical_threshold: 90
+
+# 磁盘使用率阈值
+disk_warning_threshold: 80
+disk_critical_threshold: 90
+
+# Swap 使用率阈值
+swap_warning_threshold: 70
+swap_critical_threshold: 85
+
+# 监控的服务列表 - 通用服务
+common_services:
+  - sshd
+
+# 监控的服务列表 - 根据需要添加
+additional_services:
+  - nginx
+  - docker
+  - firewalld
+  - rsyslog
+  - cron
+
+# 网络检查配置
+gateway_check_enabled: true
+dns_check_enabled: true
+dns_servers:
+  - 8.8.8.8
+  - 114.114.114.114
+
+# 报告配置
+report_format: html
+report_output_dir: /tmp/inspection_reports
+report_timestamp: true
+
+# 排除的文件系统类型
+exclude_fs_types:
+  - tmpfs
+  - devtmpfs
+  - sysfs
+  - proc
+  - devfs
+  - configfs
+  - efivarfs
+  - securityfs
+  - cgroup
+  - cgroup2
+  - pstore
+  - mqueue
+  - hugetlbfs
+  - debugfs
+  - tracefs
+  - autofs
+  - fusectl
+  - gvfsd-fuse
+  - tmpfs

@@ -1,0 +1,152 @@
+---
+# 报告生成角色
+# 此角色在控制节点运行，汇总所有主机的巡检数据并生成报告
+
+- name: 确保报告输出目录存在
+  file:
+    path: "{{ report_output_dir }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  run_once: true
+
+- name: 获取当前时间戳
+  set_fact:
+    report_timestamp: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: 汇总所有主机的巡检数据
+  set_fact:
+    all_hosts_data: >-
+      [
+      {% for host in groups['all'] %}
+        {% if hostvars[host]['system_info'] is defined %}
+          {
+            "hostname": "{{ hostvars[host]['system_info'].hostname | default(host) }}",
+            "inventory_host": "{{ host }}",
+            "fqdn": "{{ hostvars[host]['system_info'].fqdn | default('N/A') }}",
+            "os_family": "{{ hostvars[host]['system_info'].os_family | default('N/A') }}",
+            "os_distribution": "{{ hostvars[host]['system_info'].os_distribution | default('N/A') }}",
+            "os_version": "{{ hostvars[host]['system_info'].os_version | default('N/A') }}",
+            "kernel_version": "{{ hostvars[host]['system_info'].kernel_version | default('N/A') }}",
+            "architecture": "{{ hostvars[host]['system_info'].architecture | default('N/A') }}",
+            "uptime": "{{ hostvars[host]['system_info'].uptime | default('N/A') }}",
+            "current_time": "{{ hostvars[host]['system_info'].current_time | default('N/A') }}",
+            "processor_vcpus": "{{ hostvars[host]['system_info'].processor_vcpus | default('N/A') }}",
+            "memtotal_mb": "{{ hostvars[host]['system_info'].memtotal_mb | default('N/A') }}",
+            "swaptotal_mb": "{{ hostvars[host]['system_info'].swaptotal_mb | default('N/A') }}",
+            "virtualization_type": "{{ hostvars[host]['system_info'].virtualization_type | default('N/A') }}",
+            
+            "cpu_usage": "{{ hostvars[host]['resource_monitor'].cpu.usage_percent | default('N/A') }}",
+            "cpu_status": "{{ hostvars[host]['resource_monitor'].cpu.status | default('unknown') }}",
+            
+            "memory_usage": "{{ hostvars[host]['resource_monitor'].memory.usage_percent | default('N/A') }}",
+            "memory_status": "{{ hostvars[host]['resource_monitor'].memory.status | default('unknown') }}",
+            "memory_total_mb": "{{ hostvars[host]['resource_monitor'].memory.total_mb | default('N/A') }}",
+            "memory_used_mb": "{{ hostvars[host]['resource_monitor'].memory.used_mb | default('N/A') }}",
+            
+            "swap_usage": "{{ hostvars[host]['resource_monitor'].swap.usage_percent | default('N/A') }}",
+            "swap_status": "{{ hostvars[host]['resource_monitor'].swap.status | default('unknown') }}",
+            "swap_total_mb": "{{ hostvars[host]['resource_monitor'].swap.total_mb | default('N/A') }}",
+            
+            "disks": {{ hostvars[host]['resource_monitor'].disks | default([]) | to_json }},
+            "overall_disk_status": "{{ hostvars[host]['resource_monitor'].overall_disk_status | default('unknown') }}",
+            
+            "gateway_ip": "{{ hostvars[host]['network_info'].gateway.ip | default('N/A') }}",
+            "gateway_status": "{{ hostvars[host]['network_info'].gateway.status | default('unknown') }}",
+            "gateway_packet_loss": "{{ hostvars[host]['network_info'].gateway.packet_loss | default('N/A') }}",
+            
+            "dns_servers": {{ hostvars[host]['network_info'].dns.servers | default([]) | to_json }},
+            "dns_overall_status": "{{ hostvars[host]['network_info'].dns.overall_status | default('unknown') }}",
+            
+            "services": {{ hostvars[host]['network_info'].services.list | default([]) | to_json }},
+            "services_overall_status": "{{ hostvars[host]['network_info'].services.overall_status | default('unknown') }}",
+            
+            "inspection_time": "{{ lookup('pipe', 'date +%Y-%m-%d %H:%M:%S') }}",
+            
+            "overall_host_status": "{% set ns = namespace(overall='normal') %}{% if hostvars[host]['resource_monitor'].cpu.status | default('normal') == 'critical' or hostvars[host]['resource_monitor'].memory.status | default('normal') == 'critical' or hostvars[host]['resource_monitor'].swap.status | default('normal') == 'critical' or hostvars[host]['resource_monitor'].overall_disk_status | default('normal') == 'critical' or hostvars[host]['network_info'].services.overall_status | default('normal') == 'critical' %}{% set ns.overall = 'critical' %}{% elif hostvars[host]['resource_monitor'].cpu.status | default('normal') == 'warning' or hostvars[host]['resource_monitor'].memory.status | default('normal') == 'warning' or hostvars[host]['resource_monitor'].swap.status | default('normal') == 'warning' or hostvars[host]['resource_monitor'].overall_disk_status | default('normal') == 'warning' or hostvars[host]['network_info'].services.overall_status | default('normal') == 'warning' %}{% set ns.overall = 'warning' %}{% endif %}{{ ns.overall }}"
+          }
+          {% if not loop.last %},{% endif %}
+        {% endif %}
+      {% endfor %}
+      ]
+  delegate_to: localhost
+  run_once: true
+
+- name: 解析主机数据为 JSON 对象
+  set_fact:
+    hosts_data_parsed: "{{ all_hosts_data | from_json }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: 计算整体统计信息
+  set_fact:
+    inspection_summary:
+      total_hosts: "{{ hosts_data_parsed | length }}"
+      normal_hosts: >-
+        {% set count = 0 %}
+        {% for host in hosts_data_parsed %}
+          {% if host.overall_host_status == 'normal' %}
+            {% set count = count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ count }}
+      warning_hosts: >-
+        {% set count = 0 %}
+        {% for host in hosts_data_parsed %}
+          {% if host.overall_host_status == 'warning' %}
+            {% set count = count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ count }}
+      critical_hosts: >-
+        {% set count = 0 %}
+        {% for host in hosts_data_parsed %}
+          {% if host.overall_host_status == 'critical' %}
+            {% set count = count + 1 %}
+          {% endif %}
+        {% endfor %}
+        {{ count }}
+      inspection_time: "{{ lookup('pipe', 'date +%Y-%m-%d %H:%M:%S') }}"
+      report_timestamp: "{{ report_timestamp }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: 生成 HTML 巡检报告
+  template:
+    src: inspection_report.html.j2
+    dest: "{{ report_output_dir }}/inspection_report_{{ report_timestamp }}.html"
+    mode: '0644'
+  delegate_to: localhost
+  run_once: true
+  when: report_format == 'html'
+
+- name: 生成 Markdown 巡检报告
+  template:
+    src: inspection_report.md.j2
+    dest: "{{ report_output_dir }}/inspection_report_{{ report_timestamp }}.md"
+    mode: '0644'
+  delegate_to: localhost
+  run_once: true
+  when: report_format == 'markdown' or report_format == 'md'
+
+- name: 创建最新报告符号链接
+  file:
+    src: "{{ report_output_dir }}/inspection_report_{{ report_timestamp }}.html"
+    dest: "{{ report_output_dir }}/inspection_report_latest.html"
+    state: link
+    force: yes
+  delegate_to: localhost
+  run_once: true
+  when: report_format == 'html'
+
+- name: 显示报告生成信息
+  debug:
+    msg:
+      - "巡检报告已生成!"
+      - "报告目录: {{ report_output_dir }}"
+      - "HTML 报告: {{ report_output_dir }}/inspection_report_{{ report_timestamp }}.html"
+      - "最新报告链接: {{ report_output_dir }}/inspection_report_latest.html"
+  delegate_to: localhost
+  run_once: true

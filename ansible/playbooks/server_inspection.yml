@@ -1,0 +1,42 @@
+---
+# 企业服务器自动化巡检主 Playbook
+# 兼容 CentOS/RedHat 和 Ubuntu/Debian 系统
+
+- name: 服务器系统巡检
+  hosts: all
+  gather_facts: true
+  become: true
+  vars_files:
+    - ../vars/main.yml
+
+  pre_tasks:
+    - name: 检测操作系统类型
+      debug:
+        msg: "检测到操作系统: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})"
+
+    - name: 针对 CentOS/RedHat 6.x 系统的特殊处理
+      set_fact:
+        ansible_python_interpreter: /usr/bin/python
+      when:
+        - ansible_os_family == 'RedHat'
+        - ansible_distribution_version | float < 7
+
+  roles:
+    - role: system_info
+      tags: ['system', 'info']
+
+    - role: resource_monitor
+      tags: ['resource', 'monitor', 'cpu', 'memory', 'disk', 'swap']
+
+    - role: network_service
+      tags: ['network', 'service', 'dns', 'gateway']
+
+- name: 生成巡检报告
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/main.yml
+
+  roles:
+    - role: report_generator
+      tags: ['report', 'html', 'markdown']

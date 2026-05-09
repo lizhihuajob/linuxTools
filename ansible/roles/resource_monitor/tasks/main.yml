@@ -1,0 +1,187 @@
+---
+# 核心资源监控角色
+
+- name: 获取 CPU 使用率信息
+  shell: |
+    top -bn1 2>/dev/null | grep -i 'cpu(s)' || vmstat 1 1 2>/dev/null | tail -1 || echo "Unknown"
+  register: cpu_usage_raw
+  changed_when: false
+  ignore_errors: true
+
+- name: 解析 CPU 使用率 (top 输出格式)
+  set_fact:
+    cpu_idle: "{{ cpu_usage_raw.stdout | regex_search('([0-9.]+)\\s*id', '\\1') | first | default(0) | float }}"
+  when: "'cpu' in cpu_usage_raw.stdout.lower()"
+
+- name: 解析 CPU 使用率 (vmstat 输出格式)
+  set_fact:
+    cpu_idle: "{{ cpu_usage_raw.stdout.split()[-1] | default(0) | float }}"
+  when: "'id' not in cpu_usage_raw.stdout.lower() and cpu_usage_raw.stdout != 'Unknown'"
+
+- name: 计算 CPU 使用率
+  set_fact:
+    cpu_usage_percent: "{{ (100 - cpu_idle | float) | round(2) }}"
+  when: cpu_idle is defined
+
+- name: 设置 CPU 默认值
+  set_fact:
+    cpu_usage_percent: 0
+  when: cpu_usage_percent is not defined
+
+- name: 判断 CPU 状态
+  set_fact:
+    cpu_status: >-
+      {% if cpu_usage_percent | float >= cpu_critical_threshold | float %}
+        critical
+      {% elif cpu_usage_percent | float >= cpu_warning_threshold | float %}
+        warning
+      {% else %}
+        normal
+      {% endif %}
+
+- name: 获取完整的内存使用信息（使用 ansible_memory_mb）
+  setup:
+    filter:
+      - ansible_memory_mb
+      - ansible_memtotal_mb
+      - ansible_memfree_mb
+      - ansible_swaptotal_mb
+      - ansible_swapfree_mb
+
+- name: 调试输出内存事实结构
+  debug:
+    var: ansible_memory_mb
+    verbosity: 3
+
+- name: 计算可用内存（优先使用 ansible_memory_mb.real.available）
+  set_fact:
+    mem_available_mb: >-
+      {% if ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.available is defined %}
+        {{ ansible_memory_mb.real.available }}
+      {% elif ansible_memavailable_mb is defined %}
+        {{ ansible_memavailable_mb }}
+      {% elif ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.free is defined %}
+        {{ ansible_memory_mb.real.free }}
+      {% else %}
+        {{ ansible_memfree_mb | default(0) }}
+      {% endif %}
+
+- name: 计算总内存
+  set_fact:
+    mem_total_mb: >-
+      {% if ansible_memory_mb is defined and ansible_memory_mb.real is defined and ansible_memory_mb.real.total is defined %}
+        {{ ansible_memory_mb.real.total }}
+      {% else %}
+        {{ ansible_memtotal_mb | default(0) }}
+      {% endif %}
+
+- name: 计算内存使用率
+  set_fact:
+    mem_used_mb: "{{ (mem_total_mb | int - mem_available_mb | int) }}"
+    mem_usage_percent: >-
+      {% if mem_total_mb | int > 0 %}
+        {{ ((mem_total_mb | int - mem_available_mb | int) / mem_total_mb | int * 100) | round(2) }}
+      {% else %}
+        0
+      {% endif %}
+
+- name: 设置内存默认值（防止计算失败）
+  set_fact:
+    mem_used_mb: "{{ mem_used_mb | default(0) }}"
+    mem_usage_percent: "{{ mem_usage_percent | default(0) }}"
+
+- name: 判断内存状态
+  set_fact:
+    memory_status: >-
+      {% if mem_usage_percent | float >= memory_critical_threshold | float %}
+        critical
+      {% elif mem_usage_percent | float >= memory_warning_threshold | float %}
+        warning
+      {% else %}
+        normal
+      {% endif %}
+  when: mem_usage_percent is defined
+
+- name: 计算 Swap 使用率
+  set_fact:
+    swap_used_mb: "{{ (ansible_swaptotal_mb | int - ansible_swapfree_mb | int) }}"
+    swap_usage_percent: "{{ ((ansible_swaptotal_mb | int - ansible_swapfree_mb | int) / ansible_swaptotal_mb | int * 100) | round(2) }}"
+  when: ansible_swaptotal_mb | int > 0
+
+- name: 判断 Swap 状态
+  set_fact:
+    swap_status: >-
+      {% if swap_usage_percent | default(0) | float >= swap_critical_threshold | float %}
+        critical
+      {% elif swap_usage_percent | default(0) | float >= swap_warning_threshold | float %}
+        warning
+      {% else %}
+        normal
+      {% endif %}
+
+- name: 获取磁盘挂载信息
+  setup:
+    filter: ansible_mounts
+
+- name: 初始化磁盘信息列表
+  set_fact:
+    disk_info_list: []
+    disk_status: 'normal'
+
+- name: 过滤并计算磁盘使用率（遍历处理）
+  include_tasks: process_disk.yml
+  loop: "{{ ansible_mounts }}"
+  loop_control:
+    loop_var: mount_item
+  when:
+    - ansible_mounts is defined
+    - ansible_mounts | length > 0
+
+- name: 判断整体磁盘状态
+  set_fact:
+    disk_status: >-
+      {% if disk_info_list | length == 0 %}
+        normal
+      {% else %}
+        {% set ns = namespace(status='normal') %}
+        {% for disk in disk_info_list %}
+          {% if disk.status == 'critical' %}
+            {% set ns.status = 'critical' %}
+          {% elif disk.status == 'warning' and ns.status == 'normal' %}
+            {% set ns.status = 'warning' %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.status }}
+      {% endif %}
+
+- name: 设置资源监控事实
+  set_fact:
+    resource_monitor:
+      cpu:
+        usage_percent: "{{ cpu_usage_percent }}"
+        status: "{{ cpu_status }}"
+        threshold_warning: "{{ cpu_warning_threshold }}"
+        threshold_critical: "{{ cpu_critical_threshold }}"
+      memory:
+        total_mb: "{{ mem_total_mb | default(0) }}"
+        used_mb: "{{ mem_used_mb | default(0) }}"
+        available_mb: "{{ mem_available_mb | default(0) }}"
+        usage_percent: "{{ mem_usage_percent | default(0) }}"
+        status: "{{ memory_status | default('normal') }}"
+        threshold_warning: "{{ memory_warning_threshold }}"
+        threshold_critical: "{{ memory_critical_threshold }}"
+      swap:
+        total_mb: "{{ ansible_swaptotal_mb | default(0) }}"
+        used_mb: "{{ swap_used_mb | default(0) }}"
+        free_mb: "{{ ansible_swapfree_mb | default(0) }}"
+        usage_percent: "{{ swap_usage_percent | default(0) }}"
+        status: "{{ swap_status | default('normal') }}"
+        threshold_warning: "{{ swap_warning_threshold }}"
+        threshold_critical: "{{ swap_critical_threshold }}"
+      disks: "{{ disk_info_list }}"
+      overall_disk_status: "{{ disk_status }}"
+
+- name: 调试输出资源监控信息
+  debug:
+    var: resource_monitor
+    verbosity: 2
